@@ -41,6 +41,11 @@ local.properties
 *.user
 *.sln.docstates
 
+# Config settings
+App_Data/
+connectionStrings.config
+credentials.config
+
 # Build results
 
 [Dd]ebug/

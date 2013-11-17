@@ -1,6 +1,10 @@
-﻿using System;
+﻿using Microsoft.WindowsAzure.Storage;
+using Microsoft.WindowsAzure.Storage.Blob;
+using System;
 using System.Collections.Generic;
+using System.Configuration;
 using System.IO;
+using System.Linq;
 using System.Web;
 using System.Web.Hosting;
 using System.Xml.Linq;
@@ -13,7 +17,16 @@ public static class Storage
     public static List<Post> GetAllPosts()
     {
         if (HttpRuntime.Cache["posts"] == null)
-            LoadPosts();
+        {
+            if (Settings.UseBlobStorage)
+            {
+                LoadPostsFromBlob();
+            }
+            else
+            {
+                LoadPostsFromDisk();
+            }
+        }
 
         if (HttpRuntime.Cache["posts"] != null)
         {
@@ -24,7 +37,61 @@ public static class Storage
 
     public static void Save(Post post)
     {
-        string file = Path.Combine(_folder, post.ID + ".xml");
+        if (Settings.UseBlobStorage)
+        {
+            SaveToBlobStorage(post);
+        }
+        else
+        {
+            SaveToDisk(post);
+        }
+    }
+
+    public static void SaveToDisk(Post post)
+    {
+        string fileName = Path.Combine(_folder, post.ID + ".xml");
+
+        var doc = GetPostXml(post);
+
+        if (!File.Exists(fileName)) // New post
+        {
+            RefreshCache(post);
+        }
+
+        doc.Save(fileName);
+    }
+
+    public static void SaveToBlobStorage(Post post)
+    {
+        var name = String.Format("{0}.xml", post.ID);
+
+        var doc = GetPostXml(post);
+
+        RefreshCache(post);
+
+        var storageAccount = CloudStorageAccount.Parse(ConfigurationManager.ConnectionStrings["StorageConnectionString"].ConnectionString);
+
+        var blobClient = storageAccount.CreateCloudBlobClient();
+
+        var container = blobClient.GetContainerReference("posts");
+
+        // Create the container if it doesn't already exist.
+        container.CreateIfNotExists();
+
+        var blockBlob = container.GetBlockBlobReference(name);
+
+        using (var stream = new MemoryStream())
+        {
+            doc.Save(stream);
+            // Rewind the stream ready to read from it elsewhere
+            stream.Position = 0;
+
+            blockBlob.UploadFromStream(stream);
+        }
+    }
+
+    private static XDocument GetPostXml(Post post)
+    {
         post.LastModified = DateTime.UtcNow;
 
         XDocument doc = new XDocument(
@@ -63,18 +130,33 @@ public static class Storage
                 ));
         }
 
-        if (!File.Exists(file)) // New post
-        {
-            var posts = GetAllPosts();
-            posts.Insert(0, post);
-            posts.Sort((p1, p2) => p2.PubDate.CompareTo(p1.PubDate));
-            HttpRuntime.Cache.Insert("posts", posts);
-        }
+        return doc;
+    }
 
-        doc.Save(file);
+    private static void RefreshCache(Post post)
+    {
+        var posts = GetAllPosts();
+
+        if (posts.Any(p => p.ID == post.ID)) return;
+
+        posts.Insert(0, post);
+        posts.Sort((p1, p2) => p2.PubDate.CompareTo(p1.PubDate));
+        HttpRuntime.Cache.Insert("posts", posts);
     }
 
     public static void Delete(Post post)
+    {
+        if (Settings.UseBlobStorage)
+        {
+            DeleteFromBlob(post);
+        }
+        else
+        {
+            DeleteFromDisk(post);
+        }
+    }
+
+    private static void DeleteFromDisk(Post post)
     {
         var posts = GetAllPosts();
         string file = Path.Combine(_folder, post.ID + ".xml");
@@ -82,7 +164,29 @@ public static class Storage
         posts.Remove(post);
     }
 
-    private static void LoadPosts()
+    private static void DeleteFromBlob(Post post)
+    {
+        var name = String.Format("{0}.xml", post.ID);
+
+        var storageAccount = CloudStorageAccount.Parse(ConfigurationManager.ConnectionStrings["StorageConnectionString"].ConnectionString);
+
+        var blobClient = storageAccount.CreateCloudBlobClient();
+
+        var container = blobClient.GetContainerReference("posts");
+
+        // Create the container if it doesn't already exist.
+        container.CreateIfNotExists();
+
+        var blockBlob = container.GetBlockBlobReference(name);
+
+        blockBlob.DeleteIfExists();
+
+        // Tidy.....
+        var posts = GetAllPosts();
+        posts.Remove(post);
+    }
+
+    private static void LoadPostsFromDisk()
     {
         if (!Directory.Exists(_folder))
             Directory.CreateDirectory(_folder);
@@ -117,6 +221,59 @@ public static class Storage
         }
     }
 
+    private static void LoadPostsFromBlob()
+    {
+        List<Post> list = new List<Post>();
+
+        var storageAccount = CloudStorageAccount.Parse(ConfigurationManager.ConnectionStrings["StorageConnectionString"].ConnectionString);
+
+        var blobClient = storageAccount.CreateCloudBlobClient();
+
+        var container = blobClient.GetContainerReference("posts");
+
+        // Create the container if it doesn't already exist.
+        container.CreateIfNotExists();
+
+        foreach (IListBlobItem item in container.ListBlobs(null, true))
+        {
+            CloudBlockBlob blob = item as CloudBlockBlob;
+
+            if (!blob.Uri.PathAndQuery.EndsWith(".xml"))
+            {
+                continue;
+            }
+
+            var xml = blob.DownloadText();
+
+            xml = xml.Substring(1);
+
+            XElement doc = XElement.Parse(xml);
+
+            Post post = new Post()
+            {
+                ID = Path.GetFileNameWithoutExtension(blob.Uri.PathAndQuery),
+                Title = ReadValue(doc, "title"),
+                Author = ReadValue(doc, "author"),
+                Content = ReadValue(doc, "content"),
+                Slug = ReadValue(doc, "slug").ToLowerInvariant(),
+                PubDate = DateTime.Parse(ReadValue(doc, "pubDate")),
+                LastModified = DateTime.Parse(ReadValue(doc, "lastModified", DateTime.Now.ToString())),
+                IsPublished = bool.Parse(ReadValue(doc, "ispublished", "true")),
+            };
+
+            LoadCategories(post, doc);
+            LoadComments(post, doc);
+
+            list.Add(post);
+        }
+
+        if (list.Count > 0)
+        {
+            list.Sort((p1, p2) => p2.PubDate.CompareTo(p1.PubDate));
+            HttpRuntime.Cache.Insert("posts", list);
+        }
+    }
+
     private static void LoadCategories(Post post, XElement doc)
     {
         XElement categories = doc.Element("categories");
@@ -132,6 +289,7 @@ public static class Storage
 
         post.Categories = list.ToArray();
     }
+
     private static void LoadComments(Post post, XElement doc)
     {
         var comments = doc.Element("comments");

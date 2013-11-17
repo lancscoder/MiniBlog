@@ -1,4 +1,6 @@
-﻿using System;
+﻿using Microsoft.WindowsAzure.Storage;
+using Microsoft.WindowsAzure.Storage.Blob;
+using System;
 using System.Collections.Generic;
 using System.Configuration;
 using System.IO;
@@ -93,7 +95,19 @@ public static class Blog
         return posts.Skip(postsPerPage * (CurrentPage - 1)).Take(postsPerPage);
     }
 
-    public static string SaveFileToDisk(byte[] bytes, string extension)
+    public static string SaveFile(byte[] bytes, string extension)
+    {
+        if (Settings.UseBlobStorage)
+        {
+            return SaveFileToBlob(bytes, extension);
+        }
+        else
+        {
+            return SaveFileToDisk(bytes, extension);
+        }
+    }
+
+    private static string SaveFileToDisk(byte[] bytes, string extension)
     {
         string relative = "~/posts/files/" + Guid.NewGuid() + "." + extension.Trim('.');
         string file = HostingEnvironment.MapPath(relative);
@@ -104,6 +118,36 @@ public static class Blog
         cruncher.CrunchImages(file);
 
         return VirtualPathUtility.ToAbsolute(relative);
+    }
+
+    private static string SaveFileToBlob(byte[] bytes, string extension)
+    {
+        var name = Guid.NewGuid() + "." + extension.Trim('.');
+
+        var storageAccount = CloudStorageAccount.Parse(ConfigurationManager.ConnectionStrings["StorageConnectionString"].ConnectionString);
+
+        var blobClient = storageAccount.CreateCloudBlobClient();
+
+        var container = blobClient.GetContainerReference("images");
+
+        // Create the container if it doesn't already exist.
+        container.CreateIfNotExists();
+
+        var permissions = container.GetPermissions();
+
+        if (permissions.PublicAccess != BlobContainerPublicAccessType.Container)
+        {
+            container.SetPermissions(new BlobContainerPermissions
+            {
+                PublicAccess = BlobContainerPublicAccessType.Container
+            });
+        }
+
+        var blockBlob = container.GetBlockBlobReference(name);
+
+        blockBlob.UploadFromByteArray(bytes, 0, bytes.Length);
+
+        return blockBlob.Uri.AbsoluteUri;
     }
 
     public static string GetPagingUrl(int move)

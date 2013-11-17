@@ -150,7 +150,7 @@ public class MetaWeblogHandler : XmlRpcService, IMetaWeblog
     {
         ValidateUser(username, password);
 
-        string path = Blog.SaveFileToDisk(media.bits, Path.GetExtension(media.name));
+        string path = Blog.SaveFile(media.bits, Path.GetExtension(media.name));
 
         return new { url = path };
     }

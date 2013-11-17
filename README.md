@@ -44,6 +44,7 @@ Perfect for the blogger who wants to selfhost a blog.
 * Best-in-class __accessibility__
 * __Mobile__ friendly
 * Works on any host including __Windows Azure__ Websites
+* Supports Azure Blob storage
 
 ### Why another blog engine?
 7 years have past since I started the [BlogEngine.NET](http://dotnetblogengine.net) project. 

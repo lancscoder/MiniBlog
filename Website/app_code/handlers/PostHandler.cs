@@ -64,7 +64,7 @@ public class PostHandler : IHttpHandler
             string extension = Regex.Match(match.Value, "data:([^/]+)/([a-z]+);base64").Groups[2].Value;
 
             byte[] bytes = ConvertToBytes(match.Groups[2].Value);
-            string path = Blog.SaveFileToDisk(bytes, extension);
+            string path = Blog.SaveFile(bytes, extension);
 
             string value = string.Format("src=\"{0}\" alt=\"\" /", path);
 
