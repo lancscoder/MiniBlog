@@ -69,7 +69,7 @@ public static class Storage
 
         RefreshCache(post);
 
-        var storageAccount = CloudStorageAccount.Parse(ConfigurationManager.ConnectionStrings["StorageConnectionString"].ConnectionString);
+        var storageAccount = CloudStorageAccount.Parse(Settings.BlobStorageConnectionString);
 
         var blobClient = storageAccount.CreateCloudBlobClient();
 
@@ -80,14 +80,7 @@ public static class Storage
 
         var blockBlob = container.GetBlockBlobReference(name);
 
-        using (var stream = new MemoryStream())
-        {
-            doc.Save(stream);
-            // Rewind the stream ready to read from it elsewhere
-            stream.Position = 0;
-
-            blockBlob.UploadFromStream(stream);
-        }
+        blockBlob.UploadText(doc.ToString());
     }
 
     private static XDocument GetPostXml(Post post)
@@ -158,17 +151,17 @@ public static class Storage
 
     private static void DeleteFromDisk(Post post)
     {
-        var posts = GetAllPosts();
         string file = Path.Combine(_folder, post.ID + ".xml");
         File.Delete(file);
-        posts.Remove(post);
+
+        RemoveFromCache(post);
     }
 
     private static void DeleteFromBlob(Post post)
     {
         var name = String.Format("{0}.xml", post.ID);
 
-        var storageAccount = CloudStorageAccount.Parse(ConfigurationManager.ConnectionStrings["StorageConnectionString"].ConnectionString);
+        var storageAccount = CloudStorageAccount.Parse(Settings.BlobStorageConnectionString);
 
         var blobClient = storageAccount.CreateCloudBlobClient();
 
@@ -181,7 +174,11 @@ public static class Storage
 
         blockBlob.DeleteIfExists();
 
-        // Tidy.....
+        RemoveFromCache(post);
+    }
+
+    private static void RemoveFromCache(Post post)
+    {
         var posts = GetAllPosts();
         posts.Remove(post);
     }
@@ -197,20 +194,8 @@ public static class Storage
         {
             XElement doc = XElement.Load(file);
 
-            Post post = new Post()
-            {
-                ID = Path.GetFileNameWithoutExtension(file),
-                Title = ReadValue(doc, "title"),
-                Author = ReadValue(doc, "author"),
-                Content = ReadValue(doc, "content"),
-                Slug = ReadValue(doc, "slug").ToLowerInvariant(),
-                PubDate = DateTime.Parse(ReadValue(doc, "pubDate")),
-                LastModified = DateTime.Parse(ReadValue(doc, "lastModified", DateTime.Now.ToString())),
-                IsPublished = bool.Parse(ReadValue(doc, "ispublished", "true")),
-            };
+            var post = GetPostFromXml(doc, file);
 
-            LoadCategories(post, doc);
-            LoadComments(post, doc);
             list.Add(post);
         }
 
@@ -225,7 +210,7 @@ public static class Storage
     {
         List<Post> list = new List<Post>();
 
-        var storageAccount = CloudStorageAccount.Parse(ConfigurationManager.ConnectionStrings["StorageConnectionString"].ConnectionString);
+        var storageAccount = CloudStorageAccount.Parse(Settings.BlobStorageConnectionString);
 
         var blobClient = storageAccount.CreateCloudBlobClient();
 
@@ -249,20 +234,7 @@ public static class Storage
 
             XElement doc = XElement.Parse(xml);
 
-            Post post = new Post()
-            {
-                ID = Path.GetFileNameWithoutExtension(blob.Uri.PathAndQuery),
-                Title = ReadValue(doc, "title"),
-                Author = ReadValue(doc, "author"),
-                Content = ReadValue(doc, "content"),
-                Slug = ReadValue(doc, "slug").ToLowerInvariant(),
-                PubDate = DateTime.Parse(ReadValue(doc, "pubDate")),
-                LastModified = DateTime.Parse(ReadValue(doc, "lastModified", DateTime.Now.ToString())),
-                IsPublished = bool.Parse(ReadValue(doc, "ispublished", "true")),
-            };
-
-            LoadCategories(post, doc);
-            LoadComments(post, doc);
+            var post = GetPostFromXml(doc, blob.Uri.PathAndQuery);
 
             list.Add(post);
         }
@@ -272,6 +244,26 @@ public static class Storage
             list.Sort((p1, p2) => p2.PubDate.CompareTo(p1.PubDate));
             HttpRuntime.Cache.Insert("posts", list);
         }
+    }
+
+    private static Post GetPostFromXml(XElement doc, string id)
+    {
+        var post = new Post()
+        {
+            ID = Path.GetFileNameWithoutExtension(id),
+            Title = ReadValue(doc, "title"),
+            Author = ReadValue(doc, "author"),
+            Content = ReadValue(doc, "content"),
+            Slug = ReadValue(doc, "slug").ToLowerInvariant(),
+            PubDate = DateTime.Parse(ReadValue(doc, "pubDate")),
+            LastModified = DateTime.Parse(ReadValue(doc, "lastModified", DateTime.Now.ToString())),
+            IsPublished = bool.Parse(ReadValue(doc, "ispublished", "true")),
+        };
+
+        LoadCategories(post, doc);
+        LoadComments(post, doc);
+
+        return post;
     }
 
     private static void LoadCategories(Post post, XElement doc)

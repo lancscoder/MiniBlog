@@ -136,7 +136,7 @@ public static class Blog
     {
         var name = Guid.NewGuid() + "." + extension.Trim('.');
 
-        var storageAccount = CloudStorageAccount.Parse(ConfigurationManager.ConnectionStrings["StorageConnectionString"].ConnectionString);
+        var storageAccount = CloudStorageAccount.Parse(Settings.BlobStorageConnectionString);
 
         var blobClient = storageAccount.CreateCloudBlobClient();
 

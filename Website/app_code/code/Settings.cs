@@ -17,4 +17,19 @@ public static class Settings
             return _useBlobStorage == "true";
         }
     }
+
+    private static string _blobStorageConnectionString = "";
+
+    public static string BlobStorageConnectionString
+    {
+        get
+        {
+            if (String.IsNullOrWhiteSpace(_blobStorageConnectionString))
+            {
+                _blobStorageConnectionString = ConfigurationManager.AppSettings.Get("storage:blobStorageConnectionString");
+            }
+
+            return _blobStorageConnectionString;
+        }
+    }
 }
